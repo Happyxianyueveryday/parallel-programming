@@ -7,7 +7,7 @@
 ### 目录
 #### 1. MPI examples： MPI实现的部分经典算法
 #### 2. CUDA examples：CUDA实现的部分经典算法
-
+#### 3. openMP examples：openMP实现的部分经典算法
 
 
 
