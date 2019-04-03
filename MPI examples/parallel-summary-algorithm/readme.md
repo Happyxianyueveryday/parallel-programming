@@ -49,7 +49,7 @@
 ### 3.3.2.c: 使用树形结构1，进程数为2的幂
   首先我们分析一下树形结构1的示意图
   
-  ![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/parallel-summary-algorithm/pics/%E6%A0%91%E5%BD%A2%E7%BB%93%E6%9E%842.jpg)
+  ![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/parallel-summary-algorithm/pics/%E6%A0%91%E5%BD%A2%E7%BB%93%E6%9E%841.jpg)
   
   首先我们提出一个新的概念——步长，初始情况下步长为1，在之后的通信过程中，每进行一轮通信后，将步长乘以2，即step=step\*2。
   通过上述示意图，可以观察到以下几个性质：
