@@ -34,9 +34,25 @@
 
  ![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/prps/pics/QQ%E6%88%AA%E5%9B%BE20190403210658.png)
 
-### A. 加速比S分析
-加速比S的测定结果如下表所示。
+### A. 时间T分析
+时间T的测定结果如下表所示。
 ![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/prps/pics/QQ%E6%88%AA%E5%9B%BE20190403210316.png)
+
+ + 对时间T的分析：测定的运行时间在某些方面是出乎我的预期的。由上表可见，随着待排序数据量的增大，排序时间稳定增加，这是符合预期的。但是随着进程数量的增加，排序时间先减少后增加，而且在进程数为64和128时的排序时长明显增加。个人推测的一个原因是因为个人代码实现原因，进程之间通信的代价已经抵消了进程数增加对性能的提升。
+ 
+### B. 加速比S分析
+加速比S的定义公式如下。
+![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/prps/pics/QQ%E6%88%AA%E5%9B%BE20190403211408.png)
+
+加速比S的测定结果如下表所示。
+![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/prps/pics/QQ%E6%88%AA%E5%9B%BE20190403210330.png)
+
+### C. 效率T分析
+效率T的定义公式如下。
+![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/prps/pics/QQ%E6%88%AA%E5%9B%BE20190403211417.png)
+
+效率T的测定结果如下表所示。
+![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/prps/pics/QQ%E6%88%AA%E5%9B%BE20190403210342.png)
 
 
  
