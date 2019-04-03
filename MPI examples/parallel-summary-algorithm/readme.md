@@ -22,6 +22,8 @@
 + 蝶形结构求和算法图示
 ![avatar](https://github.com/Happyxianyueveryday/parallel-programming/blob/master/MPI%20examples/parallel-summary-algorithm/pics/%E8%9D%B6%E5%BD%A2%E7%BB%93%E6%9E%84.jpg)
 
+## 1. 使用方法
+
 ## 2. 算法实现思路简介
 
 ### 3.3.1.c: 使用树形结构2，进程数为2的幂
