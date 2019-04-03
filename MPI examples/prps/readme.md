@@ -122,6 +122,177 @@
 
  ```
  
+ 
+ ### 步骤2：获得划分主元
+ 首先，由进程0收集各个进程中的采样数组，因为每个进程中的采样数组的长度均为comm_sz，因此这一过程可以直接使用MPI集合通信——MPI_Gather来完成。
+	然后，进程0将收集的来自各个进程的采样数组按顺序合并，合并后的采样数组长度为comm_sz\*comm_sz，并进行快速排序。接着按一组comm_sz个元素将采样数组分为comm_sz组，除掉第一组外，取每一组的第一个数组元素组成新的采样数组，该新采样数组的长度为comm_sz-1。
+	最后，进程0将新采样数组分别分发给所有进程，由于新采样数组的长度固定为comm_sz-1，因此可以直接使用MPI集合通信——MPI_Bcast来完成。
+	
+ ```
+ /* 5.第二步：获得划分主元*/
+    /*首先，由进程0收集所有主元，并对所有主元进行排序，然后按进程数N对全体样本等间隔采样，最后将采样主元散射给其他进程*/
+    double *pivot=NULL;            /*所有进程的主元数组，每个进程的采样主元数组的大小为comm_sz，因此该主元数组的元素个数为comm_sz*comm_sz*/
+    double *sample_pivot=NULL;     /*采样主元数组，该采样主元数组的元素个数为comm_sz-1*/
+    if(my_rank==0)
+    {
+        /*首先收集所有主元到数组pivot中*/    
+        pivot=(double *)malloc((comm_sz*comm_sz)*sizeof(double));        /*申请主元数组空间*/
+        MPI_Gather(samples,comm_sz,MPI_DOUBLE,pivot,comm_sz,MPI_DOUBLE,0,MPI_COMM_WORLD);    /*进行收集操作*/
+        /*然后对数组pivot进行排序*/
+        quickSort(pivot,comm_sz*comm_sz);
+        /*之后对主元数组进行按进程数comm_sz的等间隔采样，并除去下标为0的首元素，从而获得comm_sz-1个采样主元*/
+        sample_pivot=(double *)malloc((comm_sz-1)*sizeof(double));    /*申请采样主元数组空间*/
+        int i;
+        for(i=0;i<comm_sz-1;i++)
+        {
+            sample_pivot[i]=pivot[(i+1)*comm_sz];
+        }
+        /*最后将采样主元数组直接广播给其他进程*/
+        MPI_Bcast(sample_pivot,comm_sz-1,MPI_DOUBLE,0,MPI_COMM_WORLD);
+    }
+    else    /*其他进程只需要和进程0进行集合通信操作*/
+    {
+        MPI_Gather(samples,comm_sz,MPI_DOUBLE,pivot,comm_sz,MPI_DOUBLE,0,MPI_COMM_WORLD);   /*配合进程0的聚集操作，向进程0发送当前进程主元数组samples*/
+        sample_pivot=(double *)malloc((comm_sz-1)*sizeof(double));    /*申请采样主元数组空间*/
+        MPI_Bcast(sample_pivot,comm_sz-1,MPI_DOUBLE,0,MPI_COMM_WORLD); /*配合进程0的广播操作，从进程0接收采样主元数组sample_pivot*/
+    }
+
+ ```
+ 
+### 步骤3：交换数据
+ 回顾一下步骤2，在步骤2结束后，每个进程都得到一个含有comm_sz-1个元素的新采样数组。
+	首先，每个进程将新采样数组中的comm_sz-1个元素插入排序后的本地数据中，使得每个插入元素左侧的元素均小于该插入元素，每个插入数组右侧的元素均大于该插入元素。插入完成后，插入的comm_sz-1个元素将每个进程的本地数据划分为comm_sz组。
+	然后，依次将本地数据被划分出的comm_sz组分别编号0,1,2…,comm_sz-1，然后依次将每个进程中的第i组分发给进程i。这一过程使用MPI集合通信——MPI_Alltoallv来完成。需要特别注意的是，在使用集合通信MPI_Alltoallv之前，首先需要统计各个进程中的各个分段的长度。
+ 
+ ```
+ /* 6.第三步：交换数据*/
+    /*各个进程(包括进程0)使用原有的或者由广播获得的样本主元数组sample_pivot的comm_sz-1个元素将本地数组进行划分，划分为comm_sz段，特别注意到这时本地数组lis已经经过排序；然后进行全互换操作*/
+    /*我们使用两个数组来记录各个进程中的原始数组的各个分段数组的信息，一是数组depart，该数组记录了comm_sz个数组分段各自的起始下标；二是数组depart_sz，该数组记录了各个数组分段各自的元素个数*/
+    int *depart=(int *)malloc(comm_sz*sizeof(int));    /*数组的各个分段的首元素下标*/
+    int *depart_sz=(int *)malloc(comm_sz*sizeof(int)); /*数组的各个分段的元素个数*/
+    /*计算分段首元素下标*/
+    depart[0]=0;      /*第一个分段的首元素下标为0*/
+    int k;
+    for(i=1;i<comm_sz;i++)
+    {
+        for(k=0;k<local_sz;k++)
+        {
+            if(lis[k]>sample_pivot[i-1])
+            {
+                depart[i]=k;
+                break;
+            }
+        }
+    }
+    /*计算分段元素个数*/
+    for(i=0;i<comm_sz;i++)
+    {
+        if(i==comm_sz-1)
+        depart_sz[i]=local_sz-depart[i];
+        else
+        depart_sz[i]=depart[i+1]-depart[i];
+    }
+    /*计算出分隔点的位置后，进行全互换操作，该步骤的难度较大，且是本次实验的核心内容*/
+    /*第一步：各个进程需要将自己的各个分段的长度，通知所有的其他进程，并且从所有的其他进程收集其他段的长度，这个过程使用Allgather集合通信来进行实现*/
+    int *size_dic=(int *)malloc((comm_sz*comm_sz)*sizeof(int));   /*各个进程的分段长度记录*/
+    MPI_Allgather(depart_sz,comm_sz,MPI_INT,size_dic,comm_sz,MPI_INT,MPI_COMM_WORLD);    
+    /*第二步：各个进程将当前进程中的各个分段生成二维数组lis_slot*/
+    double **lis_slot=(double **)malloc(comm_sz*sizeof(double *));      
+    for(i=0;i<comm_sz;i++)
+    {
+        lis_slot[i]=(double *)malloc(local_sz*sizeof(double));      /*每个分段的长度最多为local_sz，单个进程中的分段的数量为comm_sz*/
+    }
+    int p;
+    for(i=0;i<comm_sz;i++)
+    {
+        for(k=depart[i],p=0;k<depart[i]+depart_sz[i];k++,p++)
+        {
+            lis_slot[i][p]=lis[k];
+        }
+    }
+    /*第三步：开始进行收集，即进程i从其他所有进程中收集分段i*/
+    /*首先，创建分段收集数组final_lis，总共收集comm_sz个分段，每个分段最多local_sz个数据*/
+    double *final_lis=(double *)malloc((comm_sz*local_sz)*sizeof(double));    
+    /*然后进行收集操作，每个进程my_rank从所有进程(包括自身)中收集对应的第my_rank个分段*/
+    /*分步1：制作每个进程接收的个数表和各个进程数据收集起始下标的偏移表*/
+    int *sendcounts=(int *)malloc(comm_sz*sizeof(int));
+    int *displs=(int *)malloc(comm_sz*sizeof(int));
+    /*分步2：扁平化lis_slot*/
+    double *lis_slot_flatten=(double *)malloc(comm_sz*local_sz*sizeof(double));
+    int m=0;
+    for(i=0;i<comm_sz;i++)
+    {
+        for(k=0;k<local_sz;k++)
+        {
+            lis_slot_flatten[m]=lis_slot[i][k];
+            m++;
+        }
+    }
+    for(i=0;i<comm_sz;i++)
+    {
+        sendcounts[i]=local_sz;
+        displs[i]=local_sz*i;
+    }
+    MPI_Alltoallv(lis_slot_flatten,sendcounts,displs,MPI_DOUBLE,final_lis,sendcounts,displs,MPI_DOUBLE,MPI_COMM_WORLD);
+ ```
+ 
+### 步骤4：归并排序
+ 在步骤3完成后，每个进程i都得到了所有进程中的本地数据的编号为i的分块。首先，将这comm_sz个分块进行经典的comm_sz路归并，从而合并为一个归并结果数组。
+	然后，将各个进程中的归并结果数组按照进程编号从小到大的顺序合并为一个数组，该数组即为最终结果。因为各个进程中的归并结果数组长度不同，我们考虑使用MPI集合通信——MPI_Gatherv将各个进程中的归并结果收集到进程0中，最终得到合并结果。
+ 
+ ```
+ /* 7.归并排序*/
+    /*首先这里简单做一下回顾，一维数组final_lis中存储了所有的comm_sz个分段，只需要将这comm_sz个分段进行归并(直接归并，无需排序)即可，每个分段中总共有local_sz个数据*/
+    /*首先，由size_dic生成当前进程my_rank收集的各个分段数组的元素数量，生成结果为size_my_dic*/
+    int *size_my_dic=(int *)malloc(comm_sz*sizeof(int));   /*当前进程my_rank接收的各个分段数组的元素数量*/
+    for(i=0;i<comm_sz;i++)
+    {
+        size_my_dic[i]=size_dic[i*comm_sz+my_rank];
+    }
+    int result_lis_sz=0;          /*归并排序结果数组的大小*/
+    for(i=0;i<comm_sz;i++)
+    {
+        result_lis_sz+=size_my_dic[i];
+    }
+    double *result_lis=(double *)malloc(result_lis_sz*sizeof(double));   /*创建归并数组排序结果数组result_lis*/
+    mergeSort(result_lis,result_lis_sz,final_lis,local_sz,size_my_dic,my_rank,comm_sz);        /*对收到的各个分段进行归并排序*/
+    
+    
+    /*8.汇总结果*/
+    /*将经过排序的各个进程中的结果使用集合通信Gatherv将result_lis汇总到进程0，由进程0输出结果*/
+    /*首先使用size_dic计算各个进程中的归并排序结果中的元素个数，以及在最终汇总结果中的偏移量*/
+    int *merge_size=(int *)malloc(comm_sz*sizeof(int));
+    int *merge_disp=(int *)malloc(comm_sz*sizeof(int));
+    memset(merge_size,0,comm_sz*sizeof(int));
+    memset(merge_disp,0,comm_sz*sizeof(int));
+    for(i=0;i<comm_sz;i++)
+    {
+        for(k=0;k<comm_sz;k++)
+        {
+            merge_size[i]+=size_dic[k*comm_sz+i];
+        }
+    }
+    for(i=1;i<comm_sz;i++)
+    {
+        merge_disp[i]=merge_disp[i-1]+merge_size[i-1];
+    }
+    /*然后直接使用集合通信Gatherv收集所有进程中的数据*/
+    double *final_result=(double *)malloc(total_sz*sizeof(double));
+    MPI_Gatherv(result_lis,merge_size[my_rank],MPI_DOUBLE,final_result,merge_size,merge_disp,MPI_DOUBLE,0,MPI_COMM_WORLD);
+    
+    /*最后，由进程0输出最终的排序结果*/
+    if(my_rank==0)
+    {
+        for(i=0;i<total_sz;i++)
+        {
+            printf("%lf\n",final_result[i]);
+        }
+    }
+
+ ```
+
+
+ 
 
 
 
