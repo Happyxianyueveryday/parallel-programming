@@ -1,5 +1,8 @@
 # 基于MPI的并行正则采样排序算法
 
+## 0. 源代码
+ 源代码请参见本文件夹下的prps.c和prps2.c，其中prps2.c在prps.c基础上进行了一定的代码优化与改进。
+
 ## 1. 并行正则采样排序算法简介
 
  并行正则采样排序是最经典的并行排序算法，该算法是一种均匀划分的负载平衡的并行排序算法，相对于快速排序而言，其算法复杂度的上界和下界基本一致。
@@ -59,10 +62,66 @@
 
 ## 3. 具体实现过程
 ### 步骤1：本地数据排序：
- 首先，在进行并行正则归并排序之前，首先需要读取文件中的数据，由给定的格式可知二进制数据文件中的第一个八字节long int为待排序数据的个数。后续的字节则为待排序数组的元素。因此首先由进程0读取文件中的首8个字节，将读取到的数字设定为数组的大小，然后进程0以8个字节为一组依次读取剩下的数组元素。
- 然后，在读取完成数据后，假设进程数量为comm_sz，首先按照块划分法将数组分为comm_sz份，进程0负责进行划分，然后使用MPI集合通信——MPI_Bcast将各个部分广播给各个进程。每个进程接收到数据后，首先对自己所需要处理的数组部分进行快速排序，并得到本地数据排序结果。
- 最后，各个进程对本地数据进行采样，具体而言，将本地数据分为comm_sz份，每份的第一个数组元素作为样本。在进行上述采样后得到一个元素数量为comm_sz个的样本数据。
- 以数据数量total_sz=18且进程数量comm_sz=3为例，步骤1——本地排序过程的具体过程如下图所示。
+ 首先，在进行并行正则归并排序之前，首先需要读取文件中的数据，由给定的格式可知二进制数据文件中的第一个八字节long int为待排序数据的个数。后续的字节则为待排序数组的元素。因此首先由进程0读取文件中的首8个字节，将读取到的数字设定为数组的大小，然后进程0以8个字节为一组依次读取剩下的数组元素。  
+ 然后，在读取完成数据后，假设进程数量为comm_sz，首先按照块划分法将数组分为comm_sz份，进程0负责进行划分，然后使用MPI集合通信——MPI_Bcast将各个部分广播给各个进程。每个进程接收到数据后，首先对自己所需要处理的数组部分进行快速排序，并得到本地数据排序结果。  
+ 最后，各个进程对本地数据进行采样，具体而言，将本地数据分为comm_sz份，每份的第一个数组元素作为样本。在进行上述采样后得到一个元素数量为comm_sz个的样本数据。  
+ 
+ ```
+ /* 1.设置进程数量，创建进程和获得当前进程编号*/
+    int comm_sz=3;        /*进程数量*/
+    int my_rank;           /*进程编号*/
+    MPI_Init(NULL,NULL);
+    MPI_Comm_size(MPI_COMM_WORLD,&comm_sz);
+    MPI_Comm_rank(MPI_COMM_WORLD,&my_rank);
+    
+    /* 2.计算各个进程应该处理的数组元素数量，使用块划分法*/
+    double *data=NULL;
+    double *lis=NULL;
+    int local_sz;      /*当前进程所处理的数组元素数量*/
+    long int total_sz;      /*所有数组元素数量*/
+    
+    /*首先确定二进制文件中数字的个数*/
+    FILE *fptr;
+    fptr=fopen("psrs_data.dat", "r");
+    fread(&total_sz,sizeof(long int),1,fptr);         /*读取文件中数据的总数为total_sz*/
+
+    /*计算各个进程应当处理的数组元素个数，使用块划分法*/  
+    local_sz=total_sz/comm_sz;
+
+    /* 3.进程0进行读取数据，并将数据进行分段，将分段数据发送给其他进程，非0进程则从进程0接收其负责处理的数组元素部分*/
+    if(my_rank==0)       
+    {
+        /*仅进程0申请所有数组元素所需要的空间，并从txt文件中读取所有数组元素*/
+        data=(double *)malloc(total_sz*sizeof(double));   
+        fread(data,sizeof(double),total_sz,fptr);
+        /*进程0创建自身需要处理的数组*/
+        lis=(double *)malloc(local_sz*sizeof(double));
+        /*然后将数组按照上述划分的各个进程处理的元素的数量，将数组的各个片段散射到各个进程中*/
+        MPI_Scatter(data,local_sz,MPI_DOUBLE,lis,local_sz,MPI_DOUBLE,0,MPI_COMM_WORLD);
+        /*进程0的散射通信结束后，释放全部元素的数组data的空间*/
+        free(data);
+    }
+    else
+    {
+        /*非0进程创建自身需要处理的数组*/
+        lis=(double *)malloc(local_sz*sizeof(double));
+        /*然后和进程0进行散射通信*/
+        MPI_Scatter(data,local_sz,MPI_DOUBLE,lis,local_sz,MPI_DOUBLE,0,MPI_COMM_WORLD);
+    }
+    
+    /*并行正则采样排序算法的正式实现部分*/   /*本部分必须严格注意所创建的数组的大小*/
+    /* 4.第一步：本地数据排序*/
+    /*各个进程(包括进程0)对其负责的数组元素进行本地快速排序*/
+    quickSort(lis,local_sz);      /*先对当前进程负责的数组元素进行排序*/
+    double *samples=(double *)malloc(comm_sz*sizeof(double));      /*当前进程采样数组，当前进程采样数组的元素个数为进程数量comm_sz*/
+    int i=0;
+    for(i=0;i<comm_sz;i++)
+    {
+        samples[i]=lis[i*(local_sz/comm_sz)];     /*获得各个进程的进程采样数组，由于采样个数为comm_sz，因此采样步长为local_sz/comm_sz*/
+    }
+
+ ```
+ 
 
 
 
