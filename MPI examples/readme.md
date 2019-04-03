@@ -1,6 +1,6 @@
 # MPI examples
 
-本部分包括若干较为简单的MPI并行编程实例。
+本部分包括若干较为简单的MPI并行编程实例。各个算法的实现详情请参见下列各个子文件夹中的readme文档。
 
 ## MPI examples目录
 #### 1. matrix-vector-multiplication： 包含MPI并行矩阵乘法，MPI并行矩阵向量乘法
