@@ -1,5 +1,5 @@
 # parallel-programming
-并行程序设计导论课程实验作业。
+并行程序课程实验作业。
 
 本项目主要包含MPI，openMP，CUDA实现的部分经典算法。
 
